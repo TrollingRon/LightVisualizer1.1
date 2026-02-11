@@ -1,0 +1,41 @@
+{
+  "name": "lighting-texture-previewer",
+  "version": "1.0.0",
+  "description": "Windows desktop app for previewing theatre lighting on textured walls.",
+  "main": "src/main/main.js",
+  "author": "Codex",
+  "license": "MIT",
+  "scripts": {
+    "bundle": "esbuild src/renderer/ui.js --bundle --format=iife --platform=browser --outfile=src/renderer/bundle.js",
+    "dev": "npm run bundle && electron .",
+    "start": "npm run bundle && electron .",
+    "build:win": "npm run bundle && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "electron": "^31.0.2",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lighting.texturepreviewer",
+    "productName": "Lighting Texture Previewer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "README.md",
+      "PROJECT_PROMPT.txt",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

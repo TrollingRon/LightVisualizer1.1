@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lighting Texture Previewer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="title-block">
+          <h1>Lighting Texture Previewer</h1>
+          <p>Fast preview + high quality still render for theatre wall studies.</p>
+        </div>
+
+        <section class="panel">
+          <h2>Textures</h2>
+          <button id="loadBaseTexture">Load Base Texture</button>
+          <div class="path-label" id="baseTexturePathLabel">Using sample base texture</div>
+          <button id="loadNormalMap">Load Normal Map (Optional)</button>
+          <button id="clearNormalMap" class="secondary">Clear Normal Map</button>
+          <div class="path-label" id="normalMapPathLabel">Using sample normal map</div>
+          <hr class="divider" />
+          <h3 class="subhead">PBR Maps (Optional)</h3>
+          <button id="loadRoughnessMap">Load Roughness Map</button>
+          <div class="path-label" id="roughnessMapPathLabel">No roughness map selected</div>
+          <button id="loadMetalnessMap">Load Metalness Map</button>
+          <div class="path-label" id="metalnessMapPathLabel">No metalness map selected</div>
+          <button id="loadAoMap">Load AO Map</button>
+          <div class="path-label" id="aoMapPathLabel">No AO map selected</div>
+          <button id="loadDisplacementMap">Load Displacement Map</button>
+          <div class="path-label" id="displacementMapPathLabel">No displacement map selected</div>
+          <button id="clearPbrMaps" class="secondary">Clear PBR Maps</button>
+          <div class="field">
+            <label title="Tiles all loaded surface textures across the wall.">Tiling Scale</label>
+            <div class="row">
+              <input id="tilingScaleSlider" type="range" min="0.25" max="8" step="0.05" value="1.0" title="Increase to repeat the texture more times across the wall." />
+              <input id="tilingScaleNumber" type="number" min="0.25" max="8" step="0.05" value="1.0" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Depth strength from displacement map in high-quality render.">Displacement Scale</label>
+            <div class="row">
+              <input id="displacementScaleSlider" type="range" min="0" max="0.2" step="0.001" value="0.03" title="How much the displacement map physically offsets the wall surface." />
+              <input id="displacementScaleNumber" type="number" min="0" max="0.2" step="0.001" value="0.03" />
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Spotlight</h2>
+          <div class="field">
+            <label title="Direct spotlight tint in HEX or color picker.">Light Color</label>
+            <div class="row">
+              <input id="lightColorHex" type="text" value="#ffd6a8" maxlength="7" />
+              <input id="lightColorPicker" type="color" value="#ffd6a8" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Kelvin temperature converts to RGB if you prefer temperature-based control.">Kelvin</label>
+            <div class="row">
+              <input id="kelvinSlider" type="range" min="1800" max="12000" step="50" value="3200" title="Color temperature. Warmer is amber, cooler is blue-white." />
+              <input id="kelvinNumber" type="number" min="1800" max="12000" step="50" value="3200" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Target center illuminance in lux. Internally mapped to SpotLight intensity.">Intensity (lux)</label>
+            <div class="row">
+              <input id="luxSlider" type="range" min="1" max="4000" step="1" value="900" title="How bright the light is at wall center, measured in lux." />
+              <input id="luxNumber" type="number" min="1" max="4000" step="1" value="900" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Horizontal light direction around the wall center.">Azimuth (deg)</label>
+            <div class="row">
+              <input id="azimuthSlider" type="range" min="-80" max="80" step="1" value="0" title="Rotate the light left or right around the wall." />
+              <input id="azimuthNumber" type="number" min="-80" max="80" step="1" value="0" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Vertical light direction around the wall center.">Elevation (deg)</label>
+            <div class="row">
+              <input id="elevationSlider" type="range" min="-30" max="70" step="1" value="18" title="Tilt the light up or down." />
+              <input id="elevationNumber" type="number" min="-30" max="70" step="1" value="18" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Spotlight beam angle in degrees.">Beam Angle (deg)</label>
+            <div class="row">
+              <input id="beamAngleSlider" type="range" min="10" max="80" step="1" value="44" title="Wider angle makes a larger light footprint; narrower angle makes a tighter beam." />
+              <input id="beamAngleNumber" type="number" min="10" max="80" step="1" value="44" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Soft edge in preview and HQ penumbra control.">Softness</label>
+            <div class="row">
+              <input id="softnessSlider" type="range" min="0" max="1" step="0.01" value="0.35" title="Controls the softness of the edge and penumbra." />
+              <input id="softnessNumber" type="number" min="0" max="1" step="0.01" value="0.35" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Approximate throw distance from fixture to wall center (meters).">Throw Distance (m)</label>
+            <div class="row">
+              <input id="distanceSlider" type="range" min="1.2" max="8" step="0.1" value="3.2" title="Distance from fixture to the wall center." />
+              <input id="distanceNumber" type="number" min="1.2" max="8" step="0.1" value="3.2" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Ambient fill prevents pure black shadows.">Ambient Fill (%)</label>
+            <div class="row">
+              <input id="ambientSlider" type="range" min="0" max="10" step="0.1" value="2" title="Low-level fill light for softer shadow floor." />
+              <input id="ambientNumber" type="number" min="0" max="10" step="0.1" value="2" />
+            </div>
+          </div>
+          <div class="indicator" id="directionIndicator">Direction: Az 0°, El 18°</div>
+        </section>
+
+        <section class="panel">
+          <h2>Gels</h2>
+          <div class="field">
+            <label>Gel Preset</label>
+            <select id="gelPreset"></select>
+          </div>
+          <div class="field">
+            <label>Custom Gel HEX</label>
+            <div class="row">
+              <input id="gelHex" type="text" value="#ffffff" maxlength="7" />
+              <input id="gelColorPicker" type="color" value="#ffffff" />
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Gobo</h2>
+          <button id="loadGobo">Load Gobo Mask (B/W)</button>
+          <button id="clearGobo" class="secondary">Clear Gobo</button>
+          <div class="path-label" id="goboPathLabel">No gobo selected</div>
+          <div class="field">
+            <label>Scale</label>
+            <div class="row">
+              <input id="goboScaleSlider" type="range" min="0.3" max="3.0" step="0.01" value="1.0" title="Resize the projected gobo pattern." />
+              <input id="goboScaleNumber" type="number" min="0.3" max="3.0" step="0.01" value="1.0" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Rotation (deg)</label>
+            <div class="row">
+              <input id="goboRotationSlider" type="range" min="-180" max="180" step="1" value="0" title="Rotate the gobo projection." />
+              <input id="goboRotationNumber" type="number" min="-180" max="180" step="1" value="0" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Focus (soft)</label>
+            <div class="row">
+              <input id="goboFocusSlider" type="range" min="0" max="8" step="0.1" value="0.5" title="Increase to soften and blur the gobo edges." />
+              <input id="goboFocusNumber" type="number" min="0" max="8" step="0.1" value="0.5" />
+            </div>
+          </div>
+          <div class="field checkbox-row">
+            <input id="goboInvert" type="checkbox" />
+            <label for="goboInvert">Invert Gobo</label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>High Quality Render</h2>
+          <div class="field">
+            <label>Output Resolution</label>
+            <select id="renderResolution">
+              <option>1280×720</option>
+              <option selected>1920×1080</option>
+              <option>2560×1440</option>
+            </select>
+          </div>
+          <div class="row">
+            <button id="hqRenderButton" class="accent">High Quality Render</button>
+            <button id="exportButton" disabled>Export PNG</button>
+          </div>
+          <div class="progress-wrap">
+            <progress id="renderProgress" max="100" value="0"></progress>
+            <button id="cancelRenderButton" class="secondary" disabled>Cancel</button>
+          </div>
+          <div class="status" id="statusLine">Ready.</div>
+        </section>
+      </aside>
+
+      <main class="viewport-wrap">
+        <canvas id="viewport"></canvas>
+      </main>
+    </div>
+
+    <div id="cogMenuWrap">
+      <button id="cogButton" title="Reload menu">⚙</button>
+      <div id="cogMenu" class="hidden">
+        <button data-action="reloadCode">Reload Code</button>
+        <button data-action="reloadTextures">Reload Textures</button>
+        <button data-action="reloadModel">Reload Model</button>
+        <button data-action="reloadLight">Reload Light</button>
+      </div>
+    </div>
+
+    <script src="./bundle.js"></script>
+  </body>
+</html>
