@@ -2,9 +2,10 @@ import math
 import os
 import struct
 import zlib
+from pathlib import Path
 
 
-ROOT = r"C:\Users\ryryb\Desktop\LightingTexturePreviewer\assets"
+ROOT = Path(__file__).resolve().parents[1] / "assets"
 
 
 def write_png(path, width, height, rgb_func):
@@ -90,7 +91,7 @@ def gobo_tex(x, y, width, height):
 
 if __name__ == "__main__":
     os.makedirs(ROOT, exist_ok=True)
-    write_png(os.path.join(ROOT, "sample_base_texture.png"), 1024, 1024, base_tex)
-    write_png(os.path.join(ROOT, "sample_normal_map.png"), 1024, 1024, normal_tex)
-    write_png(os.path.join(ROOT, "sample_gobo.png"), 512, 512, gobo_tex)
+    write_png(str(ROOT / "sample_base_texture.png"), 1024, 1024, base_tex)
+    write_png(str(ROOT / "sample_normal_map.png"), 1024, 1024, normal_tex)
+    write_png(str(ROOT / "sample_gobo.png"), 512, 512, gobo_tex)
     print(f"Generated sample assets in {ROOT}")

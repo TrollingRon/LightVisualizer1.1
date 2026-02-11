@@ -6,3 +6,5 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 Thumbs.db
+PROJECT_PROMPT.txt
+src/renderer/bundle.js
