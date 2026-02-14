@@ -16,7 +16,22 @@
 
         <section class="panel">
           <h2>Textures</h2>
+          <button id="loadMaterialPackage" class="accent">Load Material Package (.zip)</button>
+          <div class="path-label">Tip: zip your BaseColor/Normal/Roughness/Metalness/AO/Displacement maps together.</div>
+          <hr class="divider" />
+          <details class="advanced-block">
+            <summary>Advanced: Manual Map Loading</summary>
+          <div class="field">
+            <label title="Trade texture detail for faster loading and less memory use.">Texture Quality</label>
+            <select id="textureQuality">
+              <option selected>Fast</option>
+              <option>Balanced</option>
+              <option>High</option>
+              <option>Ultra</option>
+            </select>
+          </div>
           <button id="loadBaseTexture">Load Base Texture</button>
+          <button id="clearBaseTexture" class="secondary">Clear Base Texture</button>
           <div class="path-label" id="baseTexturePathLabel">Using sample base texture</div>
           <button id="loadNormalMap">Load Normal Map (Optional)</button>
           <button id="clearNormalMap" class="secondary">Clear Normal Map</button>
@@ -46,6 +61,7 @@
               <input id="displacementScaleNumber" type="number" min="0" max="0.2" step="0.001" value="0.03" />
             </div>
           </div>
+          </details>
         </section>
 
         <section class="panel">
@@ -114,6 +130,54 @@
             </div>
           </div>
           <div class="indicator" id="directionIndicator">Direction: Az 0°, El 18°</div>
+        </section>
+
+        <section class="panel">
+          <h2>Haze</h2>
+          <div class="field">
+            <label>Quality</label>
+            <select id="hazeQuality">
+              <option>Low</option>
+              <option selected>Medium</option>
+              <option>High</option>
+            </select>
+          </div>
+          <div class="field checkbox-row">
+            <input id="hazeEnabled" type="checkbox" checked />
+            <label for="hazeEnabled">Enable Haze</label>
+          </div>
+          <div class="field">
+            <label title="How thick the atmospheric haze appears near the floor.">Density</label>
+            <div class="row">
+              <input id="hazeDensitySlider" type="range" min="0" max="1" step="0.01" value="0.35" title="Higher values add more visible haze." />
+              <input id="hazeDensityNumber" type="number" min="0" max="1" step="0.01" value="0.35" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Vertical reach of haze from wall bottom in meters.">Height (m)</label>
+            <div class="row">
+              <input id="hazeHeightSlider" type="range" min="0" max="2.4" step="0.01" value="1.2" title="How high the haze climbs up the wall." />
+              <input id="hazeHeightNumber" type="number" min="0" max="2.4" step="0.01" value="1.2" />
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>House Lights</h2>
+          <div class="field">
+            <label title="Global room light color that affects the whole scene.">Color</label>
+            <div class="row">
+              <input id="houseLightColorHex" type="text" value="#fff1d6" maxlength="7" />
+              <input id="houseLightColorPicker" type="color" value="#fff1d6" />
+            </div>
+          </div>
+          <div class="field">
+            <label title="Global room light intensity for the full scene.">Intensity</label>
+            <div class="row">
+              <input id="houseLightIntensitySlider" type="range" min="0" max="5" step="0.01" value="0.08" />
+              <input id="houseLightIntensityNumber" type="number" min="0" max="5" step="0.01" value="0.08" />
+            </div>
+          </div>
         </section>
 
         <section class="panel">
@@ -187,6 +251,7 @@
 
       <main class="viewport-wrap">
         <canvas id="viewport"></canvas>
+        <div id="fpsCounter" class="hidden">FPS: --</div>
       </main>
     </div>
 
@@ -197,6 +262,21 @@
         <button data-action="reloadTextures">Reload Textures</button>
         <button data-action="reloadModel">Reload Model</button>
         <button data-action="reloadLight">Reload Light</button>
+        <button id="toggleFpsButton" data-action="toggleFps">Show FPS</button>
+      </div>
+    </div>
+
+    <div id="loadingOverlay" class="hidden" aria-live="polite" aria-busy="true">
+      <div class="loading-card">
+        <div class="loading-logo-wrap">
+          <div class="loading-ring"></div>
+          <div class="loading-logo">
+            <img id="loadingLogoImg" class="hidden" alt="App Logo" />
+            <span id="loadingLogoText">LTP</span>
+          </div>
+        </div>
+        <div id="loadingMessage">Loading...</div>
+        <div id="loadingPercent">0%</div>
       </div>
     </div>
 

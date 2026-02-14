@@ -9,7 +9,8 @@
     "bundle": "esbuild src/renderer/ui.js --bundle --format=iife --platform=browser --outfile=src/renderer/bundle.js",
     "dev": "npm run bundle && electron .",
     "start": "npm run bundle && electron .",
-    "build:win": "npm run bundle && electron-builder --win nsis"
+    "build:win": "npm run bundle && electron-builder --win nsis portable",
+    "build:win:open": "npm run build:win && cmd /c start \"\" release"
   },
   "dependencies": {
     "three": "^0.165.0"
@@ -23,7 +24,7 @@
     "appId": "com.lighting.texturepreviewer",
     "productName": "Lighting Texture Previewer",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
       "src/**/*",
@@ -34,7 +35,8 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "portable"
       ]
     }
   }

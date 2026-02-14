@@ -1,6 +1,8 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const { execFile } = require("child_process");
 
 let mainWindow = null;
 
@@ -44,6 +46,39 @@ function extToMime(ext) {
   return "application/octet-stream";
 }
 
+function walkFiles(dirPath, out = []) {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) walkFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+
+function pickByPatterns(files, patterns) {
+  const imageFiles = files.filter((f) => /\.(png|jpg|jpeg|exr)$/i.test(f));
+  for (const pattern of patterns) {
+    for (const filePath of imageFiles) {
+      const low = filePath.toLowerCase();
+      if (pattern.test(low)) return filePath;
+    }
+  }
+  return "";
+}
+
+async function cleanupLegacyTempPackages() {
+  const root = path.join(os.tmpdir(), "lighting-texture-previewer");
+  try {
+    const entries = await fs.promises.readdir(root, { withFileTypes: true });
+    await Promise.all(entries
+      .filter((entry) => entry.isDirectory() && /^pkg-\d+$/i.test(entry.name))
+      .map((entry) => fs.promises.rm(path.join(root, entry.name), { recursive: true, force: true })));
+  } catch {
+    // Ignore temp cleanup failures.
+  }
+}
+
 ipcMain.handle("dialog:pickFile", async (_, payload) => {
   const { title, filters } = payload;
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -59,9 +94,10 @@ ipcMain.handle("file:readBinary", async (_, filePath) => {
   try {
     const data = await fs.promises.readFile(filePath);
     const ext = path.extname(filePath);
+    const view = new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
     return {
       ok: true,
-      data: data.toString("base64"),
+      bytes: view,
       ext,
       mime: extToMime(ext),
       name: path.basename(filePath)
@@ -72,7 +108,7 @@ ipcMain.handle("file:readBinary", async (_, filePath) => {
 });
 
 ipcMain.handle("file:savePng", async (_, payload) => {
-  const { suggestedName, base64Png } = payload;
+  const { suggestedName, base64Png, bytes } = payload;
   const result = await dialog.showSaveDialog(mainWindow, {
     title: "Export High Quality Render",
     defaultPath: suggestedName || "lighting-render.png",
@@ -80,7 +116,17 @@ ipcMain.handle("file:savePng", async (_, payload) => {
   });
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
   try {
-    await fs.promises.writeFile(result.filePath, Buffer.from(base64Png, "base64"));
+    let output = null;
+    if (bytes) {
+      if (ArrayBuffer.isView(bytes)) output = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      else if (bytes instanceof ArrayBuffer) output = Buffer.from(bytes);
+      else output = Buffer.from(bytes);
+    } else if (base64Png) {
+      output = Buffer.from(base64Png, "base64");
+    } else {
+      return { ok: false, message: "No PNG payload was provided." };
+    }
+    await fs.promises.writeFile(result.filePath, output);
     return { ok: true, filePath: result.filePath };
   } catch (error) {
     return { ok: false, message: "Failed to export PNG. Please try another location." };
@@ -120,7 +166,55 @@ ipcMain.handle("app:reloadCode", async () => {
   return { ok: true };
 });
 
+ipcMain.handle("archive:extractMaterialPackage", async (_, zipPath) => {
+  try {
+    const tempRoot = path.join(os.tmpdir(), "lighting-texture-previewer", "material-cache", "current");
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+    await fs.promises.mkdir(tempRoot, { recursive: true });
+    const pwsh = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    await new Promise((resolve, reject) => {
+      execFile(
+        pwsh,
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Expand-Archive -LiteralPath "${zipPath.replace(/"/g, '""')}" -DestinationPath "${tempRoot.replace(/"/g, '""')}" -Force`
+        ],
+        { windowsHide: true },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+
+    const files = walkFiles(tempRoot);
+    const result = {
+      baseTexturePath: pickByPatterns(files, [
+        /basecolor/, /base_color/, /albedo/, /diffuse/, /base[-_ ]?colou?r/, /(^|[\\/_-])color([._-]|$)/
+      ]),
+      normalMapPath: pickByPatterns(files, [/normalgl/, /normal[_-]?ogl/, /normaldx/, /normal/, /_n\./, /nrm/]),
+      roughnessMapPath: pickByPatterns(files, [/roughness/, /rough/]),
+      metalnessMapPath: pickByPatterns(files, [/metalness/, /metallic/, /(^|\\|\/)metal\./]),
+      aoMapPath: pickByPatterns(files, [
+        /ambient[_-]?occlusion/,
+        /ambientocclusion/,
+        /(^|[\\/_-])ao([._-]|$)/,
+        /occlusion/,
+        /(^|\\|\/)ao\./
+      ]),
+      displacementMapPath: pickByPatterns(files, [/displacement/, /height/])
+    };
+
+    if (!result.baseTexturePath) {
+      return { ok: false, message: "Could not find a base color texture in that ZIP." };
+    }
+    return { ok: true, ...result };
+  } catch (error) {
+    return { ok: false, message: "Could not extract material package." };
+  }
+});
+
 app.whenReady().then(() => {
+  cleanupLegacyTempPackages();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

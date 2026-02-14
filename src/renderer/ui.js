@@ -26,6 +26,13 @@ const defaults = {
   beamAngle: 44,
   softness: 0.35,
   throwDistance: 3.2,
+  houseLightColorHex: "#fff1d6",
+  houseLightIntensity: 0.08,
+  hazeEnabled: true,
+  hazeQuality: "Medium",
+  hazeDensity: 0.35,
+  hazeHeight: 1.2,
+  textureQuality: "Fast",
   tilingScale: 1.0,
   displacementScale: 0.03,
   ambientFill: 2,
@@ -35,15 +42,21 @@ const defaults = {
   goboRotation: 0,
   goboFocus: 0.5,
   goboInvert: false,
+  fpsCounterEnabled: false,
   renderResolution: "1920×1080",
   camera: null
 };
 
 const state = { ...defaults };
+const START_WITH_BLANK_SLATE = true;
 
 let engine = null;
 let isRendering = false;
 let defaultsFromApp = null;
+let loadingDepth = 0;
+let loadingFailsafeTimer = null;
+let loadingPercentValue = 0;
+let goboUpdateTimer = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -68,8 +81,124 @@ function setProgress(value) {
   if (p) p.value = value;
 }
 
+function updateFpsDisplay(fpsValue) {
+  const el = $("fpsCounter");
+  if (!el) return;
+  el.textContent = `FPS: ${Math.max(0, Math.round(fpsValue))}`;
+}
+
+function applyFpsVisibility() {
+  const el = $("fpsCounter");
+  const btn = $("toggleFpsButton");
+  if (!el) return;
+  if (state.fpsCounterEnabled) {
+    el.classList.remove("hidden");
+  } else {
+    el.classList.add("hidden");
+  }
+  if (engine && typeof engine.setFpsEnabled === "function") {
+    engine.setFpsEnabled(state.fpsCounterEnabled);
+  }
+  if (btn) btn.textContent = state.fpsCounterEnabled ? "Hide FPS" : "Show FPS";
+}
+
+function clampPercent(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function setLoadingOverlayStatus(message = null, percent = null) {
+  const msg = $("loadingMessage");
+  const pct = $("loadingPercent");
+  if (message !== null && msg) msg.textContent = message;
+  if (percent !== null) loadingPercentValue = clampPercent(percent);
+  if (pct) pct.textContent = `${loadingPercentValue}%`;
+}
+
+function startLoading(message = "Loading...", percent = 0) {
+  loadingDepth += 1;
+  document.body.classList.add("app-loading");
+  const overlay = $("loadingOverlay");
+  setLoadingOverlayStatus(message, percent);
+  if (overlay) {
+    overlay.classList.remove("hidden");
+    overlay.style.display = "grid";
+  }
+  if (loadingFailsafeTimer) clearTimeout(loadingFailsafeTimer);
+  loadingFailsafeTimer = setTimeout(() => {
+    forceHideLoading();
+    setStatus("Loading timeout recovered.", true);
+  }, 45000);
+}
+
+function stopLoading() {
+  loadingDepth = Math.max(0, loadingDepth - 1);
+  if (loadingDepth > 0) return;
+  document.body.classList.remove("app-loading");
+  const overlay = $("loadingOverlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.style.display = "none";
+  }
+  if (loadingFailsafeTimer) {
+    clearTimeout(loadingFailsafeTimer);
+    loadingFailsafeTimer = null;
+  }
+}
+
+function forceHideLoading() {
+  loadingDepth = 0;
+  document.body.classList.remove("app-loading");
+  const overlay = $("loadingOverlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.style.display = "none";
+  }
+  if (loadingFailsafeTimer) {
+    clearTimeout(loadingFailsafeTimer);
+    loadingFailsafeTimer = null;
+  }
+}
+
+async function withLoading(message, fn, startPercent = 5) {
+  startLoading(message, startPercent);
+  try {
+    return await fn();
+  } finally {
+    setLoadingOverlayStatus(null, 100);
+    stopLoading();
+  }
+}
+
+function initLoadingLogo() {
+  const img = $("loadingLogoImg");
+  const txt = $("loadingLogoText");
+  if (!img || !txt) return;
+  const candidates = [
+    "../../assets/logo.png",
+    "../../assets/icon.png",
+    "../../assets/app_logo.png",
+    "../../assets/lighting-texture-previewer.png",
+    "../../assets/LightingTexturePreviewer.png"
+  ];
+  candidates.forEach((src) => {
+    const probe = new Image();
+    probe.onload = () => {
+      if (!img.classList.contains("hidden")) return;
+      img.src = src;
+      img.classList.remove("hidden");
+      txt.classList.add("hidden");
+    };
+    probe.src = src;
+  });
+}
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
+}
+
+function normalizeTextureQuality(v) {
+  return v === "Fast" || v === "High" || v === "Ultra" ? v : "Balanced";
 }
 
 function sanitizeHex(input, fallback = "#ffffff") {
@@ -126,6 +255,7 @@ function parseResolution(text) {
 }
 
 function persistStateSoon() {
+  if (START_WITH_BLANK_SLATE) return;
   if (!engine) return;
   const snapshot = { ...state, camera: engine.getCameraState() };
   window.appApi.saveState(snapshot);
@@ -166,6 +296,12 @@ function updatePathLabels() {
   if (gobo) gobo.textContent = state.goboPath || "No gobo selected";
 }
 
+function applyTextureQualityToRenderer() {
+  if (!engine || typeof engine.setTextureQuality !== "function") return;
+  state.textureQuality = normalizeTextureQuality(state.textureQuality);
+  engine.setTextureQuality(state.textureQuality);
+}
+
 function pushLightingToRenderer() {
   try {
     engine.applyLightingState({
@@ -178,7 +314,8 @@ function pushLightingToRenderer() {
   }
 }
 
-async function loadBaseTexture(pathValue) {
+async function loadBaseTexture(pathValue, showLoader = true) {
+  const run = async () => {
   try {
     await engine.loadBaseTexture(pathValue);
     engine.applyTiling(state.tilingScale);
@@ -188,9 +325,12 @@ async function loadBaseTexture(pathValue) {
   } catch {
     setStatus("Could not load that base texture. Please use PNG/JPG/JPEG.", true);
   }
+  };
+  return showLoader ? withLoading("Loading base texture...", run) : run();
 }
 
-async function loadNormalMap(pathValue) {
+async function loadNormalMap(pathValue, showLoader = true) {
+  const run = async () => {
   try {
     await engine.loadNormalTexture(pathValue);
     engine.applyTiling(state.tilingScale);
@@ -200,9 +340,12 @@ async function loadNormalMap(pathValue) {
   } catch {
     setStatus("Could not load that normal map. Supported: EXR, PNG, JPG.", true);
   }
+  };
+  return showLoader ? withLoading("Loading normal map...", run) : run();
 }
 
-async function loadGobo(pathValue) {
+async function loadGobo(pathValue, showLoader = true) {
+  const run = async () => {
   try {
     await engine.loadGoboImage(pathValue, {
       scale: state.goboScale,
@@ -216,9 +359,12 @@ async function loadGobo(pathValue) {
   } catch {
     setStatus("Could not load that gobo. Please use a black-and-white image.", true);
   }
+  };
+  return showLoader ? withLoading("Loading gobo...", run) : run();
 }
 
-async function loadPbrMap(pathValue, kind) {
+async function loadPbrMap(pathValue, kind, showLoader = true) {
+  const run = async () => {
   try {
     await engine.loadPbrTexture(pathValue, kind);
     if (kind === "roughness") state.roughnessMapPath = pathValue;
@@ -232,15 +378,98 @@ async function loadPbrMap(pathValue, kind) {
   } catch {
     setStatus(`Could not load ${kind} map. Supported: EXR, PNG, JPG.`, true);
   }
+  };
+  return showLoader ? withLoading(`Loading ${kind} map...`, run) : run();
 }
 
-function applyGoboControls() {
-  engine.updateGoboTexture({
+async function loadMaterialPackage(zipPath) {
+  return withLoading("Loading material package...", async () => {
+  // Reset previous material maps first so old detail does not bleed into the next package.
+  engine.clearBaseTexture();
+  engine.clearNormalTexture();
+  engine.clearPbrTextures();
+  state.baseTexturePath = "";
+  state.normalMapPath = "";
+  state.roughnessMapPath = "";
+  state.metalnessMapPath = "";
+  state.aoMapPath = "";
+  state.displacementMapPath = "";
+  updatePathLabels();
+
+  setLoadingOverlayStatus("Extracting material package...", 8);
+  const extracted = await window.appApi.extractMaterialPackage(zipPath);
+  if (!extracted?.ok) {
+    throw new Error(extracted?.message || "Could not extract package.");
+  }
+
+  setLoadingOverlayStatus("Loading base color...", 28);
+  await loadBaseTexture(extracted.baseTexturePath, false);
+  state.baseTexturePath = extracted.baseTexturePath;
+
+  let done = 0;
+  const optionalTotal = [
+    extracted.normalMapPath,
+    extracted.roughnessMapPath,
+    extracted.metalnessMapPath,
+    extracted.aoMapPath,
+    extracted.displacementMapPath
+  ].filter(Boolean).length;
+  const updateOptionalProgress = (label) => {
+    done += 1;
+    const ratio = optionalTotal > 0 ? done / optionalTotal : 1;
+    setLoadingOverlayStatus(`Loading ${label} (${done}/${optionalTotal})...`, 28 + ratio * 64);
+  };
+
+  if (extracted.normalMapPath) {
+    await loadNormalMap(extracted.normalMapPath, false);
+    state.normalMapPath = extracted.normalMapPath;
+    updateOptionalProgress("normal map");
+  } else {
+    state.normalMapPath = "";
+    engine.clearNormalTexture();
+  }
+
+  const loadPacked = async (filePath, kind, stateKey) => {
+    if (!filePath) {
+      state[stateKey] = "";
+      return;
+    }
+    await loadPbrMap(filePath, kind, false);
+    state[stateKey] = filePath;
+    updateOptionalProgress(`${kind} map`);
+  };
+
+  await loadPacked(extracted.roughnessMapPath, "roughness", "roughnessMapPath");
+  await loadPacked(extracted.metalnessMapPath, "metalness", "metalnessMapPath");
+  await loadPacked(extracted.aoMapPath, "ao", "aoMapPath");
+  await loadPacked(extracted.displacementMapPath, "displacement", "displacementMapPath");
+
+  engine.applyTiling(state.tilingScale);
+  engine.setDisplacementScale(state.displacementScale);
+  updatePathLabels();
+  setLoadingOverlayStatus("Finalizing material package...", 100);
+  });
+}
+
+function applyGoboControls(immediate = false) {
+  const run = () => engine.updateGoboTexture({
     scale: state.goboScale,
     rotation: state.goboRotation,
     focus: state.goboFocus,
     invert: state.goboInvert
   });
+  if (goboUpdateTimer) {
+    clearTimeout(goboUpdateTimer);
+    goboUpdateTimer = null;
+  }
+  if (immediate) {
+    run();
+    return;
+  }
+  goboUpdateTimer = setTimeout(() => {
+    goboUpdateTimer = null;
+    run();
+  }, 40);
 }
 
 function resetLightStateToDefaults() {
@@ -252,6 +481,12 @@ function resetLightStateToDefaults() {
   state.beamAngle = defaults.beamAngle;
   state.softness = defaults.softness;
   state.throwDistance = defaults.throwDistance;
+  state.houseLightColorHex = defaults.houseLightColorHex;
+  state.houseLightIntensity = defaults.houseLightIntensity;
+  state.hazeEnabled = defaults.hazeEnabled;
+  state.hazeQuality = defaults.hazeQuality;
+  state.hazeDensity = defaults.hazeDensity;
+  state.hazeHeight = defaults.hazeHeight;
   state.tilingScale = defaults.tilingScale;
   state.displacementScale = defaults.displacementScale;
   state.ambientFill = defaults.ambientFill;
@@ -280,6 +515,17 @@ function syncUiFromState() {
   $("softnessNumber").value = String(state.softness);
   $("distanceSlider").value = String(state.throwDistance);
   $("distanceNumber").value = String(state.throwDistance);
+  $("houseLightColorHex").value = state.houseLightColorHex;
+  $("houseLightColorPicker").value = state.houseLightColorHex;
+  $("houseLightIntensitySlider").value = String(state.houseLightIntensity);
+  $("houseLightIntensityNumber").value = String(state.houseLightIntensity);
+  $("hazeEnabled").checked = Boolean(state.hazeEnabled);
+  $("hazeQuality").value = state.hazeQuality;
+  $("hazeDensitySlider").value = String(state.hazeDensity);
+  $("hazeDensityNumber").value = String(state.hazeDensity);
+  $("hazeHeightSlider").value = String(state.hazeHeight);
+  $("hazeHeightNumber").value = String(state.hazeHeight);
+  $("textureQuality").value = normalizeTextureQuality(state.textureQuality);
   $("tilingScaleSlider").value = String(state.tilingScale);
   $("tilingScaleNumber").value = String(state.tilingScale);
   $("displacementScaleSlider").value = String(state.displacementScale);
@@ -295,9 +541,11 @@ function syncUiFromState() {
   $("goboFocusSlider").value = String(state.goboFocus);
   $("goboFocusNumber").value = String(state.goboFocus);
   $("goboInvert").checked = state.goboInvert;
+  if (typeof state.fpsCounterEnabled !== "boolean") state.fpsCounterEnabled = false;
   $("renderResolution").value = state.renderResolution;
   $("gelPreset").value = state.gelPresetName;
   updatePathLabels();
+  applyFpsVisibility();
 }
 
 function initGelDropdown() {
@@ -311,6 +559,40 @@ function initGelDropdown() {
   });
 }
 
+function initCollapsiblePanels() {
+  const panels = document.querySelectorAll(".sidebar > section.panel");
+  panels.forEach((panel) => {
+    const heading = panel.querySelector("h2");
+    if (!heading) return;
+    const title = (heading.textContent || "").trim();
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "panel-header";
+    header.textContent = title;
+
+    const content = document.createElement("div");
+    content.className = "panel-content";
+
+    let node = heading.nextSibling;
+    while (node) {
+      const next = node.nextSibling;
+      content.appendChild(node);
+      node = next;
+    }
+
+    panel.classList.add("collapsible");
+    panel.classList.remove("expanded");
+    heading.remove();
+    panel.prepend(content);
+    panel.prepend(header);
+
+    header.addEventListener("click", () => {
+      panel.classList.toggle("expanded");
+    });
+  });
+}
+
 function setBusyRenderUI(busy) {
   isRendering = busy;
   $("hqRenderButton").disabled = busy;
@@ -318,54 +600,137 @@ function setBusyRenderUI(busy) {
 }
 
 async function handleReloadTextures() {
-  if (state.baseTexturePath) await loadBaseTexture(state.baseTexturePath);
-  if (state.normalMapPath) await loadNormalMap(state.normalMapPath);
-  if (state.roughnessMapPath) await loadPbrMap(state.roughnessMapPath, "roughness");
-  if (state.metalnessMapPath) await loadPbrMap(state.metalnessMapPath, "metalness");
-  if (state.aoMapPath) await loadPbrMap(state.aoMapPath, "ao");
-  if (state.displacementMapPath) await loadPbrMap(state.displacementMapPath, "displacement");
-  engine.applyTiling(state.tilingScale);
-  engine.setDisplacementScale(state.displacementScale);
-  setStatus("Reloaded texture files from disk paths.");
+  startLoading("Reloading textures...", 0);
+  try {
+    const steps = [];
+    if (state.baseTexturePath) steps.push({ label: "base texture", run: () => loadBaseTexture(state.baseTexturePath, false) });
+    if (state.normalMapPath) steps.push({ label: "normal map", run: () => loadNormalMap(state.normalMapPath, false) });
+    if (state.roughnessMapPath) steps.push({ label: "roughness map", run: () => loadPbrMap(state.roughnessMapPath, "roughness", false) });
+    if (state.metalnessMapPath) steps.push({ label: "metalness map", run: () => loadPbrMap(state.metalnessMapPath, "metalness", false) });
+    if (state.aoMapPath) steps.push({ label: "AO map", run: () => loadPbrMap(state.aoMapPath, "ao", false) });
+    if (state.displacementMapPath) steps.push({ label: "displacement map", run: () => loadPbrMap(state.displacementMapPath, "displacement", false) });
+
+    const total = steps.length || 1;
+    let done = 0;
+    for (const step of steps) {
+      setLoadingOverlayStatus(`Reloading ${step.label}...`, (done / total) * 100);
+      await step.run();
+      done += 1;
+      setLoadingOverlayStatus(`Reloaded ${step.label}.`, (done / total) * 100);
+    }
+    engine.applyTiling(state.tilingScale);
+    engine.setDisplacementScale(state.displacementScale);
+    setLoadingOverlayStatus("Finalizing reload...", 100);
+    setStatus("Reloaded texture files from disk paths.");
+  } finally {
+    stopLoading();
+  }
 }
 
 async function bootstrap() {
-  initGelDropdown();
-  let loaded = { ok: true, state: null };
+  startLoading("Launching Lighting Texture Previewer...", 0);
   try {
-    loaded = (await window.appApi?.loadState?.()) || loaded;
-  } catch {
-    loaded = { ok: true, state: null };
-  }
-  try {
-    defaultsFromApp = (await window.appApi?.getDefaultAssets?.()) || {};
-  } catch {
-    defaultsFromApp = {};
-  }
-  const hasSavedState = Boolean(loaded && loaded.ok && loaded.state);
-  if (loaded.ok && loaded.state) Object.assign(state, defaults, loaded.state);
-  if (!state.baseTexturePath && defaultsFromApp.baseTexturePath) state.baseTexturePath = defaultsFromApp.baseTexturePath;
-  // Only auto-apply sample normal map on first-ever run. If user cleared it, keep it cleared.
-  if (!hasSavedState && !state.normalMapPath && defaultsFromApp.normalMapPath) {
-    state.normalMapPath = defaultsFromApp.normalMapPath;
-  }
+    setLoadingOverlayStatus("Preparing interface...", 4);
+    initLoadingLogo();
+    initGelDropdown();
+    initCollapsiblePanels();
 
-  engine = new LightingRenderer($("viewport"), { onStatus: setStatus, onProgress: setProgress });
-  engine.applyCameraState(state.camera);
+    setLoadingOverlayStatus("Loading saved settings...", 10);
+    let loaded = { ok: true, state: null };
+    if (!START_WITH_BLANK_SLATE) {
+      try {
+        loaded = (await window.appApi?.loadState?.()) || loaded;
+      } catch {
+        loaded = { ok: true, state: null };
+      }
+    }
 
-  syncUiFromState();
-  await loadBaseTexture(state.baseTexturePath);
-  if (state.normalMapPath) await loadNormalMap(state.normalMapPath);
-  if (state.roughnessMapPath) await loadPbrMap(state.roughnessMapPath, "roughness");
-  if (state.metalnessMapPath) await loadPbrMap(state.metalnessMapPath, "metalness");
-  if (state.aoMapPath) await loadPbrMap(state.aoMapPath, "ao");
-  if (state.displacementMapPath) await loadPbrMap(state.displacementMapPath, "displacement");
-  engine.applyTiling(state.tilingScale);
-  engine.setDisplacementScale(state.displacementScale);
-  if (state.goboPath) await loadGobo(state.goboPath);
-  else engine.clearGobo();
-  pushLightingToRenderer();
-  persistStateSoon();
+    setLoadingOverlayStatus("Loading default assets...", 16);
+    try {
+      defaultsFromApp = (await window.appApi?.getDefaultAssets?.()) || {};
+    } catch {
+      defaultsFromApp = {};
+    }
+    const hasSavedState = Boolean(loaded && loaded.ok && loaded.state);
+    if (START_WITH_BLANK_SLATE) {
+      Object.assign(state, defaults);
+      state.baseTexturePath = "";
+      state.normalMapPath = "";
+      state.roughnessMapPath = "";
+      state.metalnessMapPath = "";
+      state.aoMapPath = "";
+      state.displacementMapPath = "";
+      state.goboPath = "";
+      state.hazeEnabled = false;
+      state.hazeDensity = 0;
+      state.camera = null;
+    } else {
+      if (loaded.ok && loaded.state) Object.assign(state, defaults, loaded.state);
+      if (!state.baseTexturePath && defaultsFromApp.baseTexturePath) state.baseTexturePath = defaultsFromApp.baseTexturePath;
+      // Only auto-apply sample normal map on first-ever run. If user cleared it, keep it cleared.
+      if (!hasSavedState && !state.normalMapPath && defaultsFromApp.normalMapPath) {
+        state.normalMapPath = defaultsFromApp.normalMapPath;
+      }
+    }
+
+    setLoadingOverlayStatus("Initializing renderer...", 24);
+    engine = new LightingRenderer($("viewport"), {
+      onStatus: setStatus,
+      onProgress: setProgress,
+      onFps: updateFpsDisplay
+    });
+    applyTextureQualityToRenderer();
+    engine.applyCameraState(state.camera);
+    applyFpsVisibility();
+
+    setLoadingOverlayStatus("Syncing controls...", 32);
+    syncUiFromState();
+    if (state.baseTexturePath) {
+      setLoadingOverlayStatus("Loading base texture...", 40);
+      await loadBaseTexture(state.baseTexturePath, false);
+    } else {
+      engine.previewMaterial.uniforms.hasBaseMap.value = 0;
+      engine.previewMaterial.uniforms.baseMap.value = null;
+      engine.hqMaterial.map = null;
+      engine.hqMaterial.needsUpdate = true;
+      setLoadingOverlayStatus("Starting with blank wall...", 40);
+    }
+
+    const optionalMaps = [];
+    if (state.normalMapPath) optionalMaps.push({ label: "normal map", run: () => loadNormalMap(state.normalMapPath, false) });
+    if (state.roughnessMapPath) optionalMaps.push({ label: "roughness map", run: () => loadPbrMap(state.roughnessMapPath, "roughness", false) });
+    if (state.metalnessMapPath) optionalMaps.push({ label: "metalness map", run: () => loadPbrMap(state.metalnessMapPath, "metalness", false) });
+    if (state.aoMapPath) optionalMaps.push({ label: "AO map", run: () => loadPbrMap(state.aoMapPath, "ao", false) });
+    if (state.displacementMapPath) optionalMaps.push({ label: "displacement map", run: () => loadPbrMap(state.displacementMapPath, "displacement", false) });
+
+    const optionalTotal = optionalMaps.length || 1;
+    let optionalDone = 0;
+    const optionalStart = 46;
+    const optionalSpan = 34;
+    if (optionalMaps.length > 0) {
+      await Promise.all(
+        optionalMaps.map(async (task) => {
+          await task.run();
+          optionalDone += 1;
+          const pct = optionalStart + (optionalDone / optionalTotal) * optionalSpan;
+          setLoadingOverlayStatus(`Loading ${task.label} (${optionalDone}/${optionalTotal})...`, pct);
+        })
+      );
+    } else {
+      setLoadingOverlayStatus("No optional maps to load.", optionalStart + optionalSpan);
+    }
+
+    setLoadingOverlayStatus("Applying scene settings...", 84);
+    engine.applyTiling(state.tilingScale);
+    engine.setDisplacementScale(state.displacementScale);
+    if (state.goboPath) {
+      setLoadingOverlayStatus("Loading gobo...", 90);
+      await loadGobo(state.goboPath, false);
+    }
+    else engine.clearGobo();
+    setLoadingOverlayStatus("Applying lighting and haze...", 95);
+    pushLightingToRenderer();
+    persistStateSoon();
 
   bindRangeAndNumber("kelvinSlider", "kelvinNumber", (v) => {
     state.kelvin = clamp(v, 1800, 12000);
@@ -393,11 +758,40 @@ async function bootstrap() {
   bindRangeAndNumber("softnessSlider", "softnessNumber", (v) => {
     state.softness = clamp(v, 0, 1);
     pushLightingToRenderer();
-    applyGoboControls();
   });
   bindRangeAndNumber("distanceSlider", "distanceNumber", (v) => {
     state.throwDistance = clamp(v, 1.2, 8);
     pushLightingToRenderer();
+  });
+  bindRangeAndNumber("houseLightIntensitySlider", "houseLightIntensityNumber", (v) => {
+    state.houseLightIntensity = clamp(v, 0, 5);
+    pushLightingToRenderer();
+  });
+  bindRangeAndNumber("hazeDensitySlider", "hazeDensityNumber", (v) => {
+    state.hazeDensity = clamp(v, 0, 1);
+    pushLightingToRenderer();
+  });
+  bindRangeAndNumber("hazeHeightSlider", "hazeHeightNumber", (v) => {
+    state.hazeHeight = clamp(v, 0, 2.4);
+    pushLightingToRenderer();
+  });
+  on("hazeEnabled", "change", () => {
+    state.hazeEnabled = $("hazeEnabled").checked;
+    pushLightingToRenderer();
+    persistStateSoon();
+  });
+  on("hazeQuality", "change", () => {
+    const v = $("hazeQuality").value;
+    state.hazeQuality = v === "Low" || v === "High" ? v : "Medium";
+    pushLightingToRenderer();
+    persistStateSoon();
+  });
+  on("textureQuality", "change", () => {
+    const v = $("textureQuality").value;
+    state.textureQuality = normalizeTextureQuality(v);
+    applyTextureQualityToRenderer();
+    setStatus(`Texture quality set to ${state.textureQuality}.`);
+    persistStateSoon();
   });
   bindRangeAndNumber("tilingScaleSlider", "tilingScaleNumber", (v) => {
     state.tilingScale = clamp(v, 0.25, 8);
@@ -426,7 +820,7 @@ async function bootstrap() {
 
   on("goboInvert", "change", () => {
     state.goboInvert = $("goboInvert").checked;
-    applyGoboControls();
+    applyGoboControls(true);
     persistStateSoon();
   });
 
@@ -440,6 +834,19 @@ async function bootstrap() {
   on("lightColorPicker", "input", () => {
     state.lightColorHex = sanitizeHex($("lightColorPicker").value, state.lightColorHex);
     $("lightColorHex").value = state.lightColorHex;
+    pushLightingToRenderer();
+    persistStateSoon();
+  });
+  on("houseLightColorHex", "change", () => {
+    state.houseLightColorHex = sanitizeHex($("houseLightColorHex").value, state.houseLightColorHex);
+    $("houseLightColorHex").value = state.houseLightColorHex;
+    $("houseLightColorPicker").value = state.houseLightColorHex;
+    pushLightingToRenderer();
+    persistStateSoon();
+  });
+  on("houseLightColorPicker", "input", () => {
+    state.houseLightColorHex = sanitizeHex($("houseLightColorPicker").value, state.houseLightColorHex);
+    $("houseLightColorHex").value = state.houseLightColorHex;
     pushLightingToRenderer();
     persistStateSoon();
   });
@@ -486,6 +893,29 @@ async function bootstrap() {
     if (!filePath) return;
     await loadBaseTexture(filePath);
     persistStateSoon();
+  });
+
+  on("clearBaseTexture", "click", () => {
+    state.baseTexturePath = "";
+    engine.clearBaseTexture();
+    updatePathLabels();
+    setStatus("Base texture cleared.");
+    persistStateSoon();
+  });
+
+  on("loadMaterialPackage", "click", async () => {
+    const filePath = await window.appApi.pickFile({
+      title: "Select Material Package (ZIP)",
+      filters: [{ name: "Material Package", extensions: ["zip"] }]
+    });
+    if (!filePath) return;
+    try {
+      await loadMaterialPackage(filePath);
+      setStatus("Material package loaded.");
+      persistStateSoon();
+    } catch (error) {
+      setStatus(`Could not load package: ${error?.message || "unknown error"}`, true);
+    }
   });
 
   on("loadNormalMap", "click", async () => {
@@ -611,14 +1041,15 @@ async function bootstrap() {
   });
 
   on("exportButton", "click", async () => {
-    if (!engine.lastRenderBase64) {
+    const bytes = await engine.getLastRenderBytes();
+    if (!bytes) {
       setStatus("Run a high quality render before exporting.", true);
       return;
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const response = await window.appApi.savePng({
       suggestedName: `lighting-render-${stamp}.png`,
-      base64Png: engine.lastRenderBase64
+      bytes
     });
     if (response.ok) setStatus(`Exported: ${response.filePath}`);
     else if (!response.canceled) setStatus(response.message || "Could not export PNG.", true);
@@ -649,25 +1080,41 @@ async function bootstrap() {
           engine.clearGobo();
           setStatus("Light and theatre settings reset to defaults.");
         } else if (action === "reloadCode") {
-          await window.appApi.saveState({ ...state, camera: engine.getCameraState() });
+          if (!START_WITH_BLANK_SLATE) {
+            await window.appApi.saveState({ ...state, camera: engine.getCameraState() });
+          }
           await window.appApi.reloadCode();
+        } else if (action === "toggleFps") {
+          state.fpsCounterEnabled = !state.fpsCounterEnabled;
+          applyFpsVisibility();
+          if (state.fpsCounterEnabled) {
+            updateFpsDisplay(0);
+          }
         }
         persistStateSoon();
       });
     });
   }
 
-  setInterval(() => persistStateSoon(), 3000);
+    setLoadingOverlayStatus("Ready.", 100);
+    if (!START_WITH_BLANK_SLATE) {
+      setInterval(() => persistStateSoon(), 3000);
+    }
+  } finally {
+    stopLoading();
+  }
 }
 
 bootstrap().catch((error) => {
   // eslint-disable-next-line no-console
   console.error("Bootstrap error:", error);
+  forceHideLoading();
   setStatus(`Init error: ${error?.message || "unknown"}`, true);
 });
 
 window.addEventListener("error", (event) => {
   // eslint-disable-next-line no-console
   console.error("Runtime error event:", event.error || event.message);
+  forceHideLoading();
   setStatus(`Runtime error: ${event.message}`, true);
 });

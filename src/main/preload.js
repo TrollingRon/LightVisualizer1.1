@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld("appApi", {
   saveState: (state) => ipcRenderer.invoke("state:save", state),
   loadState: () => ipcRenderer.invoke("state:load"),
   getDefaultAssets: () => ipcRenderer.invoke("app:getDefaultAssets"),
+  extractMaterialPackage: (zipPath) => ipcRenderer.invoke("archive:extractMaterialPackage", zipPath),
   reloadCode: () => ipcRenderer.invoke("app:reloadCode")
 });

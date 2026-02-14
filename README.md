@@ -25,8 +25,15 @@ npm run build:win
 ```
 
 Build output:
-- Installer EXE is generated under `dist/` (NSIS target).
-- Install and launch like any normal Windows app.
+- Files are generated under `release/`.
+- You get both:
+  - NSIS installer EXE (`Lighting Texture Previewer Setup ... .exe`)
+  - Portable EXE (`Lighting Texture Previewer ... .exe`) you can launch directly.
+
+### Easiest Way (Build + Open Output Folder)
+```bash
+build-release.cmd
+```
 
 ## Controls
 - Orbit camera:

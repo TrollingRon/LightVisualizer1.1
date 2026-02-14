@@ -8,3 +8,9 @@ yarn-error.log*
 Thumbs.db
 PROJECT_PROMPT.txt
 src/renderer/bundle.js
+/bundle.js
+/index.html
+/tmp_asar/
+/Lighting Texture Previewer.exe
+/release/*
+!/release/README.md
